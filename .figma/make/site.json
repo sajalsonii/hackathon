@@ -1,0 +1,10 @@
+{
+  "description": "Showcase your education, skills, projects, and experience with an interactive, futuristic portfolio featuring cinematic animations and responsive design.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
