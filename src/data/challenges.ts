@@ -31,6 +31,7 @@ greet("Alex")`,
     ],
     bugDnaCategory: "Syntax",
     xpReward: 150,
+    bugLine: 1,
     explanation: "In Python, header statements such as `def`, `if`, `for`, `while`, and `class` must conclude with a colon `:` to introduce their indented code block.",
     validate: (code: string) => {
       // Must have def greet(name): with colon
@@ -79,6 +80,7 @@ print(calculate_average([80, 95, 100]))`,
     ],
     bugDnaCategory: "Logic",
     xpReward: 300,
+    bugLine: 2,
     explanation: "In Python, `=` is strictly an assignment operator. Conditional equality comparisons require the double equals operator `==`.",
     validate: (code: string) => {
       if (/if\s+len\s*\(\s*scores\s*\)\s*=[^=]/.test(code)) {
@@ -129,6 +131,7 @@ countdown(3)`,
     ],
     bugDnaCategory: "Runtime",
     xpReward: 550,
+    bugLine: 6,
     explanation: "Recursive functions must always reduce the problem size toward a terminating base case, otherwise maximum call stack recursion depth is exceeded.",
     validate: (code: string) => {
       if (/countdown\s*\(\s*n\s*\)/.test(code) && !/countdown\s*\(\s*n\s*-\s*1\s*\)/.test(code)) {
@@ -178,6 +181,7 @@ activateShield(9000);`,
     ],
     bugDnaCategory: "Syntax",
     xpReward: 150,
+    bugLine: 3,
     explanation: "Every opening bracket and parenthesis in JavaScript must have an exact matching closing character in the appropriate scope.",
     validate: (code: string) => {
       if (/console\.log\s*\(\s*message\s*;/.test(code)) {
@@ -234,6 +238,7 @@ console.log(syncLoadout(inventory));`,
     ],
     bugDnaCategory: "Off-by-One",
     xpReward: 300,
+    bugLine: 6,
     explanation: "Array indices start at zero, so the final element resides at index `length - 1`. Iterating up to `<= length` attempts to access `undefined`.",
     validate: (code: string) => {
       if (/i\s*<=\s*items\.length/.test(code)) {
@@ -292,6 +297,7 @@ console.log(getActiveSlayers(team));`,
     ],
     bugDnaCategory: "Arrays",
     xpReward: 550,
+    bugLine: 3,
     explanation: "Array `.filter()` expects its callback to return a truthy or falsy boolean value for each item. Assignment `=` within curly braces without a `return` returns `undefined`.",
     validate: (code: string) => {
       if (/slayer\.status\s*=\s*["']active["']/.test(code)) {
@@ -348,6 +354,7 @@ console.log(getActiveSlayers(team));`,
     ],
     bugDnaCategory: "Syntax",
     xpReward: 150,
+    bugLine: 3,
     explanation: "In Java, semicolons `;` are mandatory statement terminators that inform the compiler where an instruction ends.",
     validate: (code: string) => {
       if (/int\s+multiplier\s*=\s*3\s*\n/.test(code) || /int\s+multiplier\s*=\s*3\s*[^;\s]/.test(code)) {
@@ -402,6 +409,7 @@ console.log(getActiveSlayers(team));`,
     ],
     bugDnaCategory: "Logic",
     xpReward: 300,
+    bugLine: 3,
     explanation: "In Java, `==` tests object reference equality. To test whether two distinct String instances contain the same character sequence, always use `.equals()`.",
     validate: (code: string) => {
       if (/entered\s*==\s*expected/.test(code)) {
@@ -458,6 +466,7 @@ console.log(getActiveSlayers(team));`,
     ],
     bugDnaCategory: "Runtime",
     xpReward: 550,
+    bugLine: 5,
     explanation: "Always guard against null before calling methods on array elements. Short-circuit evaluation `!= null && ...` prevents NullPointerException.",
     validate: (code: string) => {
       const hasNullCheck =
@@ -520,6 +529,7 @@ console.log(drainCorruption(sectors));`,
     ],
     bugDnaCategory: "Loops",
     xpReward: 350,
+    bugLine: 5,
     explanation: "A `while` loop requires its continuation variable to make progress toward the termination condition with each iteration, otherwise it causes an infinite execution hang.",
     validate: (code: string) => {
       const incrementsIndex =
@@ -531,6 +541,267 @@ console.log(drainCorruption(sectors));`,
         return { passed: false, message: "FATAL: Process execution timed out. Infinite loop detected on while (index < sectors.length)." };
       }
       return { passed: true, message: "Fix verified! Daily protocol complete. Infinite fracture sealed.", output: '["Purged Sector 7A", "Purged Sector 7B", "Purged Sector 7C"]' };
+    }
+  },
+  {
+    id: "py-easy-quotes",
+    title: "Unclosed String Fracture",
+    language: "Python",
+    difficulty: "Easy",
+    worldId: "01",
+    worldName: "Syntax Forest",
+    threatClass: "CLASS I",
+    threatName: "LITERAL LEAK",
+    bugType: "EOL While Scanning String Literal",
+    description: "An authorization terminal failed to broadcast its status. A string literal was left unclosed before the line ended.",
+    fileName: "auth_status.py",
+    brokenCode: `def show_status():
+    print("STATUS: ACCESS GRANTED)
+
+show_status()`,
+    sampleSolution: `def show_status():
+    print("STATUS: ACCESS GRANTED")
+
+show_status()`,
+    hints: [
+      "Examine line 2: check the string inside `print(...)`.",
+      "Every string started with a double quote `\"` must terminate with a matching double quote.",
+      "Add a closing quote `\"` before the closing parenthesis: `\"STATUS: ACCESS GRANTED\"`"
+    ],
+    bugDnaCategory: "Syntax",
+    xpReward: 150,
+    bugLine: 2,
+    explanation: "In Python, string literals initiated with a quotation mark must be closed with the identical quote mark before reaching end-of-line.",
+    validate: (code: string) => {
+      const valid = /print\(\s*["']STATUS:\s*ACCESS\s*GRANTED["']\s*\)/i.test(code);
+      if (!valid) {
+        return { passed: false, message: "SyntaxError: unterminated string literal in print() call." };
+      }
+      return { passed: true, message: "Fix verified! String literal sealed successfully.", output: "STATUS: ACCESS GRANTED" };
+    }
+  },
+  {
+    id: "py-med-range-step",
+    title: "Range Offset Anomaly",
+    language: "Python",
+    difficulty: "Medium",
+    worldId: "02",
+    worldName: "Logic Caverns",
+    threatClass: "CLASS II",
+    threatName: "OFFSET GLITCH",
+    bugType: "Off-by-One Loop Bounds",
+    description: "An inventory scanner skipped the first item in the manifest due to a misconfigured loop range.",
+    fileName: "scan_inventory.py",
+    brokenCode: `def count_items(items):
+    total = 0
+    for i in range(1, len(items)):
+        total += items[i]
+    return total
+
+print(count_items([10, 20, 30]))`,
+    sampleSolution: `def count_items(items):
+    total = 0
+    for i in range(0, len(items)):
+        total += items[i]
+    return total
+
+print(count_items([10, 20, 30]))`,
+    hints: [
+      "Look at the `range(...)` arguments on line 3.",
+      "Python sequences are zero-indexed: the first item is at index 0, not index 1.",
+      "Change `range(1, len(items))` to `range(0, len(items))` or `range(len(items))`."
+    ],
+    bugDnaCategory: "Loops",
+    xpReward: 300,
+    bugLine: 3,
+    explanation: "List indexes begin at index 0. Starting a range at 1 skips the initial element `items[0]`.",
+    validate: (code: string) => {
+      const fixed =
+        /for\s+i\s+in\s+range\(\s*0\s*,\s*len\(\s*items\s*\)\s*\)/.test(code) ||
+        /for\s+i\s+in\s+range\(\s*len\(\s*items\s*\)\s*\)/.test(code) ||
+        /for\s+item\s+in\s+items:/.test(code);
+      if (!fixed) {
+        return { passed: false, message: "Loop still starts at index 1 and skips items[0]." };
+      }
+      return { passed: true, message: "Fix verified! Full inventory tallied correctly.", output: "60" };
+    }
+  },
+  {
+    id: "js-easy-keyword",
+    title: "Keyword Corruption",
+    language: "JavaScript",
+    difficulty: "Easy",
+    worldId: "01",
+    worldName: "Syntax Forest",
+    threatClass: "CLASS I",
+    threatName: "TOKEN SCRAMBLE",
+    bugType: "Reserved Keyword Typo",
+    description: "A pricing calculate routine failed to parse because a core language keyword was misspelled.",
+    fileName: "pricing.js",
+    brokenCode: `fucntion calculateTotal(price, tax) {
+  return price + tax;
+}
+
+console.log(calculateTotal(100, 15));`,
+    sampleSolution: `function calculateTotal(price, tax) {
+  return price + tax;
+}
+
+console.log(calculateTotal(100, 15));`,
+    hints: [
+      "Look at the first word on line 1.",
+      "Notice the spelling of the declaration keyword that defines a function in JavaScript.",
+      "Correct `fucntion` to `function`."
+    ],
+    bugDnaCategory: "Syntax",
+    xpReward: 150,
+    bugLine: 1,
+    explanation: "JavaScript requires the exact spelling of reserved keywords like `function` to compile declarations.",
+    validate: (code: string) => {
+      if (/fucntion/i.test(code)) {
+        return { passed: false, message: "ReferenceError: 'fucntion' is not defined. Check keyword spelling." };
+      }
+      if (!/function\s+calculateTotal/i.test(code)) {
+        return { passed: false, message: "Function declaration is missing or malformed." };
+      }
+      return { passed: true, message: "Fix verified! Function keyword restored.", output: "115" };
+    }
+  },
+  {
+    id: "js-med-accum-reset",
+    title: "Accumulator Reset Spike",
+    language: "JavaScript",
+    difficulty: "Medium",
+    worldId: "02",
+    worldName: "Logic Caverns",
+    threatClass: "CLASS II",
+    threatName: "STATE OVERWRITE",
+    bugType: "Accumulator Scope Error",
+    description: "A score tallying algorithm always reports only the last element's value instead of the sum.",
+    fileName: "tally_scores.js",
+    brokenCode: `function sumScores(scores) {
+  for (let i = 0; i < scores.length; i++) {
+    let total = 0;
+    total += scores[i];
+  }
+  return total;
+}
+
+console.log(sumScores([10, 25, 15]));`,
+    sampleSolution: `function sumScores(scores) {
+  let total = 0;
+  for (let i = 0; i < scores.length; i++) {
+    total += scores[i];
+  }
+  return total;
+}
+
+console.log(sumScores([10, 25, 15]));`,
+    hints: [
+      "Look at where `let total = 0` is declared.",
+      "If the accumulator is declared inside the `for` loop body, it resets to 0 on every single loop iteration.",
+      "Move `let total = 0;` before the `for` loop so it preserves the running sum."
+    ],
+    bugDnaCategory: "Logic",
+    xpReward: 300,
+    bugLine: 3,
+    explanation: "Declaring and initializing an accumulator variable inside the loop body reinitializes it on every pass, destroying previous additions.",
+    validate: (code: string) => {
+      if (/for\s*\(.*\)\s*\{\s*let\s+total\s*=\s*0/m.test(code)) {
+        return { passed: false, message: "Logic error: 'total' is still resetting to 0 inside the loop body." };
+      }
+      if (!/let\s+total\s*=\s*0;?\s*for/m.test(code) && !/var\s+total\s*=\s*0;?\s*for/m.test(code)) {
+        return { passed: false, message: "Move accumulator declaration before the loop." };
+      }
+      return { passed: true, message: "Fix verified! Accumulator accumulates across all iterations.", output: "50" };
+    }
+  },
+  {
+    id: "java-easy-case",
+    title: "Case-Sensitivity Fracture",
+    language: "Java",
+    difficulty: "Easy",
+    worldId: "01",
+    worldName: "Syntax Forest",
+    threatClass: "CLASS I",
+    threatName: "SYMBOL MISMATCH",
+    bugType: "Package/Class Case Mismatch",
+    description: "The Java compiler cannot find the output stream class due to lowercased class naming.",
+    fileName: "Telemetry.java",
+    brokenCode: `public class Telemetry {
+    public static void main(String[] args) {
+        system.out.println("CORE ONLINE");
+    }
+}`,
+    sampleSolution: `public class Telemetry {
+    public static void main(String[] args) {
+        System.out.println("CORE ONLINE");
+    }
+}`,
+    hints: [
+      "Inspect line 3: look at `system.out.println`.",
+      "Java is strictly case-sensitive. Standard library classes like `System` start with an uppercase letter.",
+      "Change `system.out.println` to `System.out.println`."
+    ],
+    bugDnaCategory: "Syntax",
+    xpReward: 150,
+    bugLine: 3,
+    explanation: "In Java, identifiers are case-sensitive. The standard library class `java.lang.System` must be capitalized.",
+    validate: (code: string) => {
+      if (/system\.out\.println/m.test(code)) {
+        return { passed: false, message: "error: package system does not exist. Java classes are case-sensitive." };
+      }
+      if (!/System\.out\.println/m.test(code)) {
+        return { passed: false, message: "Ensure System.out.println(\"CORE ONLINE\"); is intact." };
+      }
+      return { passed: true, message: "Fix verified! Telemetry stream linked.", output: "CORE ONLINE" };
+    }
+  },
+  {
+    id: "java-med-array-bound",
+    title: "Array Index Boundary Leak",
+    language: "Java",
+    difficulty: "Medium",
+    worldId: "02",
+    worldName: "Logic Caverns",
+    threatClass: "CLASS II",
+    threatName: "INDEX SURGE",
+    bugType: "ArrayIndexOutOfBoundsException",
+    description: "A loop iterating through sensor readings overshoots the valid array boundary.",
+    fileName: "SensorArray.java",
+    brokenCode: `public class SensorArray {
+    public static void main(String[] args) {
+        int[] readings = {12, 18, 24};
+        for (int i = 0; i <= readings.length; i++) {
+            System.out.println(readings[i]);
+        }
+    }
+}`,
+    sampleSolution: `public class SensorArray {
+    public static void main(String[] args) {
+        int[] readings = {12, 18, 24};
+        for (int i = 0; i < readings.length; i++) {
+            System.out.println(readings[i]);
+        }
+    }
+}`,
+    hints: [
+      "Check the condition inside the `for` loop on line 4: `i <= readings.length`.",
+      "An array of length 3 has valid indices 0, 1, and 2. When `i` reaches 3, `readings[3]` throws an exception.",
+      "Change `<=` to `<` so the loop stops before reaching `readings.length`."
+    ],
+    bugDnaCategory: "Off-by-One",
+    xpReward: 300,
+    bugLine: 4,
+    explanation: "Java arrays are zero-indexed up to `length - 1`. Using `<=` reaches an index equal to `length`, throwing `ArrayIndexOutOfBoundsException`.",
+    validate: (code: string) => {
+      if (/i\s*<=\s*readings\.length/m.test(code)) {
+        return { passed: false, message: "Exception in thread 'main' java.lang.ArrayIndexOutOfBoundsException: Index 3 out of bounds for length 3" };
+      }
+      if (!/i\s*<\s*readings\.length/m.test(code)) {
+        return { passed: false, message: "Loop condition must be `i < readings.length`." };
+      }
+      return { passed: true, message: "Fix verified! Sensor array parsed within bounds.", output: "12\n18\n24" };
     }
   }
 ];
@@ -549,18 +820,22 @@ export function getChallengeById(id: string): Challenge {
 export function getRandomChallenge(
   language: string,
   difficulty: string,
-  excludeId?: string
+  playedIds: string[] | string = []
 ): Challenge {
   const matching = challenges.filter(
     (c) => c.language === language && c.difficulty === difficulty
   );
   if (matching.length === 0) return challenges[0];
 
-  const eligible = excludeId
-    ? matching.filter((c) => c.id !== excludeId)
-    : matching;
+  const excludeList = Array.isArray(playedIds)
+    ? playedIds
+    : playedIds
+      ? [playedIds]
+      : [];
 
-  const pool = eligible.length > 0 ? eligible : matching;
+  const unplayed = matching.filter((c) => !excludeList.includes(c.id));
+  const pool = unplayed.length > 0 ? unplayed : matching;
+
   const randomIndex = Math.floor(Math.random() * pool.length);
   return pool[randomIndex];
 }

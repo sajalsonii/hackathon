@@ -47,11 +47,47 @@ export interface PlayerStats {
   slayerName?: string;
   xp: number;
   streak: number;
+  longestStreak?: number;
   combo: number;
   bugsSlain: number;
   completedChallengeIds: string[];
   dnaStats: Record<string, number>;
+  currentWorld?: string;
+  achievements?: string[];
+  dailyChallenge?: Record<string, unknown> | null;
   lastPlayedDate?: string;
+}
+
+export interface GameProgress {
+  user_id: string;
+  username: string;
+  xp: number;
+  slayer_rank: string;
+  level: number;
+  current_world: string;
+  streak: number;
+  longest_streak: number;
+  combo: number;
+  bugs_slain: number;
+  last_activity_date: string;
+  bug_dna: Record<string, number>;
+  achievements: string[];
+  daily_challenge: Record<string, unknown> | null;
+  updated_at: string;
+}
+
+export interface ChallengeHistoryEntry {
+  user_id: string;
+  challenge_title: string;
+  language: string;
+  difficulty: string;
+  bug_category: string;
+  completed: boolean;
+  attempts: number;
+  hints_used: number;
+  time_taken_seconds: number;
+  xp_earned: number;
+  source: string;
 }
 
 export interface PlayerProfile {

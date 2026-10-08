@@ -1109,9 +1109,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .mission-brief { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line-soft); background: rgba(45,226,230,.03); }
 .mission-brief svg { width: 17px; color: var(--cyan); flex: 0 0 auto; }.mission-brief p { margin: 0; color: var(--muted); font-size: 13px; }.mission-brief b { color: var(--cyan); }
 .editor-area { position: relative; min-height: 0; display: grid; grid-template-columns: 54px 1fr; overflow: hidden; }
-.line-numbers { display: flex; flex-direction: column; align-items: end; gap: 0; padding: 16px 12px; border-right: 1px solid var(--line-soft); color: #3f4954; font: 13px/1.75 var(--code); user-select: none; }
-.editor-area textarea { resize: none; width: 100%; height: 100%; border: 0; outline: 0; padding: 16px; color: #d7e0d2; caret-color: var(--acid); background: transparent; font: 13px/1.75 var(--code); tab-size: 2; }
-.editor-area.scanning::after { content: ""; position: absolute; inset: 42% 15px auto 54px; height: 30px; border: 1px solid rgba(255,182,39,.45); background: rgba(255,182,39,.04); pointer-events: none; }
+.line-numbers { display: flex; flex-direction: column; align-items: end; gap: 0; padding: 16px 12px; border-right: 1px solid var(--line-soft); color: #3f4954; font: 13px/24px var(--code); user-select: none; overflow: hidden; }
+.line-numbers span { height: 24px; line-height: 24px; display: block; }
+.line-numbers span.bug-line { color: #ffb627; font-weight: 700; text-shadow: 0 0 8px rgba(255, 182, 39, 0.5); }
+.editor-area textarea { resize: none; width: 100%; height: 100%; border: 0; outline: 0; padding: 16px; color: #d7e0d2; caret-color: var(--acid); background: transparent; font: 13px/24px var(--code); line-height: 24px; tab-size: 2; }
+.bug-line-highlight { position: absolute; left: 54px; right: 12px; border: 1px solid rgba(255, 182, 39, 0.55); background: rgba(255, 182, 39, 0.08); box-shadow: 0 0 14px rgba(255, 182, 39, 0.15); border-radius: 2px; pointer-events: none; z-index: 1; }
 .scan-line { position: absolute; top: 0; left: 54px; right: 0; height: 2px; background: var(--cyan); box-shadow: 0 0 16px var(--cyan); animation: editorScan 2.5s ease-in-out infinite; pointer-events: none; }
 
 /* Mobile active hint strip (between code area and footer) */
@@ -1688,6 +1690,145 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   .next-button { width: 100%; min-height: 50px; }
 }
 
+/* ==========================================================================
+   HUNT LOADING OVERLAY (GEMINI INTEGRATION G2)
+   ========================================================================== */
+.hunt-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(5, 7, 11, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.loading-terminal-box {
+  width: 100%;
+  max-width: 480px;
+  background: var(--panel, #0c1017);
+  border: 1px solid var(--line, rgba(200, 255, 61, 0.25));
+  box-shadow: 0 0 35px rgba(0, 0, 0, 0.85), 0 0 25px rgba(45, 226, 230, 0.12);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.loading-terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.45);
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  font: 700 11px var(--code);
+  color: var(--muted, #94a3b8);
+  letter-spacing: 0.08em;
+}
+
+.loading-close-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted, #94a3b8);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.loading-close-btn:hover {
+  color: var(--text, #f1f5f9);
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.loading-terminal-content {
+  padding: 34px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+}
+
+.loading-radar-ring {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 1px dashed var(--acid, #c8ff3d);
+  display: grid;
+  place-items: center;
+  color: var(--acid, #c8ff3d);
+  background: radial-gradient(circle, rgba(200, 255, 61, 0.14) 0%, transparent 70%);
+  animation: loadingRadarPulse 2s ease-in-out infinite alternate;
+}
+
+.loading-message-text {
+  font: 700 14px var(--code);
+  color: var(--text, #f1f5f9);
+  letter-spacing: 0.06em;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-progress-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.loading-progress-bar {
+  height: 100%;
+  width: 45%;
+  background: linear-gradient(90deg, var(--cyan, #2de2e6), var(--acid, #c8ff3d));
+  border-radius: 2px;
+  animation: loadingProgressScan 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.loading-meta-info {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font: 11px var(--code);
+  color: var(--muted, #94a3b8);
+  letter-spacing: 0.04em;
+}
+
+.loading-meta-info b {
+  color: var(--acid, #c8ff3d);
+}
+
+@keyframes loadingProgressScan {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(230%);
+  }
+}
+
+@keyframes loadingRadarPulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.75;
+  }
+  100% {
+    transform: scale(1.06);
+    opacity: 1;
+    box-shadow: 0 0 16px rgba(200, 255, 61, 0.28);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   .hero-scanbeam { display: none !important; }
@@ -1713,4 +1854,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   .world-stagger-node { animation: none !important; opacity: 1 !important; transform: translate(-50%, -50%) !important; }
   .map-path path { animation: none !important; stroke-dashoffset: 0 !important; opacity: 1 !important; }
   .xp-track-fill { transition: none !important; }
+  .loading-radar-ring { animation: none !important; }
+  .loading-progress-bar { animation: none !important; width: 100% !important; transform: none !important; }
 }

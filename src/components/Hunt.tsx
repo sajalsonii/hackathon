@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -15,7 +15,7 @@ import { DebugScannerService } from "../services/scannerService";
 
 interface HuntProps {
   challenge: Challenge;
-  onWin: (challengeId: string, timeTakenSeconds: number, pulsesUsed: number) => void;
+  onWin: (challengeId: string, timeTakenSeconds: number, pulsesUsed: number, attempts?: number) => void;
 }
 
 export default function Hunt({ challenge, onWin }: HuntProps) {
@@ -24,6 +24,7 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
   const [wrong, setWrong] = useState(false);
   const [creatureState, setCreatureState] = useState<CreatureState>("detected");
   const [creatureHealth, setCreatureHealth] = useState(100);
+  const [attempts, setAttempts] = useState(1);
   const [feedback, setFeedback] = useState<{
     type: "error" | "success" | "info" | null;
     message: string;
@@ -32,6 +33,10 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
     message: ""
   });
   const [seconds, setSeconds] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
 
   // Reset challenge code and state whenever challenge changes
   useEffect(() => {
@@ -40,8 +45,12 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
     setWrong(false);
     setCreatureState("detected");
     setCreatureHealth(100);
+    setAttempts(1);
     setFeedback({ type: null, message: "" });
     setSeconds(0);
+    setScrollTop(0);
+    if (textareaRef.current) textareaRef.current.scrollTop = 0;
+    if (lineNumbersRef.current) lineNumbersRef.current.scrollTop = 0;
   }, [challenge]);
 
   // Live timer
@@ -78,10 +87,21 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
 
   const handleResetCode = () => {
     setCode(challenge.brokenCode);
+    setScrollTop(0);
+    if (textareaRef.current) textareaRef.current.scrollTop = 0;
+    if (lineNumbersRef.current) lineNumbersRef.current.scrollTop = 0;
     setFeedback({
       type: "info",
       message: "Restored initial corrupted code sequence."
     });
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    const top = e.currentTarget.scrollTop;
+    setScrollTop(top);
+    if (lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = top;
+    }
   };
 
   const scan = async () => {
@@ -101,9 +121,10 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
         message: result.message || "CRITICAL HIT! Anomaly eliminated. Threat neutralized."
       });
       setTimeout(() => {
-        onWin(challenge.id, seconds, hintLevel);
+        onWin(challenge.id, seconds, hintLevel, attempts);
       }, 750);
     } else {
+      setAttempts((prev) => prev + 1);
       setWrong(true);
       setCreatureHealth((prev) => Math.max(30, prev - 15));
       setCreatureState("damaged");
@@ -119,7 +140,38 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
     }
   };
 
-  const lineCount = Math.max(14, code.split("\n").length + 2);
+  const getTargetBugLine = (): number | null => {
+    if (hintLevel === 0) return null;
+
+    let bugLine = challenge.bugLine;
+
+    // Fallback: diff between brokenCode and sampleSolution if bugLine is undefined
+    if (bugLine === undefined && challenge.brokenCode && challenge.sampleSolution) {
+      const brokenLines = challenge.brokenCode.split("\n");
+      const solLines = challenge.sampleSolution.split("\n");
+      for (let i = 0; i < brokenLines.length; i++) {
+        if (brokenLines[i] !== solLines[i]) {
+          bugLine = i + 1;
+          break;
+        }
+      }
+    }
+
+    const totalLines = code.split("\n").length;
+    if (
+      typeof bugLine === "number" &&
+      Number.isInteger(bugLine) &&
+      bugLine >= 1 &&
+      bugLine <= totalLines
+    ) {
+      return bugLine;
+    }
+
+    return null;
+  };
+
+  const targetBugLine = getTargetBugLine();
+  const lineCount = code.split("\n").length;
 
   return (
     <motion.main
@@ -180,6 +232,11 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
               <RotateCcw /> Reset
             </button>
             <div className="editor-badges">
+              {challenge.isAiGenerated && (
+                <b style={{ borderColor: "var(--cyan)", color: "var(--cyan)", background: "rgba(45, 226, 230, 0.08)" }}>
+                  AI-GENERATED
+                </b>
+              )}
               <b>{challenge.language.toUpperCase()}</b>
               <b>{challenge.difficulty.toUpperCase()}</b>
             </div>
@@ -193,15 +250,32 @@ export default function Hunt({ challenge, onWin }: HuntProps) {
           </div>
 
           <div className={`editor-area ${hintLevel > 0 ? "scanning" : ""}`}>
-            <div className="line-numbers">
-              {Array.from({ length: lineCount }, (_, i) => (
-                <span key={i}>{i + 1}</span>
-              ))}
+            <div className="line-numbers" ref={lineNumbersRef}>
+              {Array.from({ length: lineCount }, (_, i) => {
+                const lineNum = i + 1;
+                const isBugLine = targetBugLine === lineNum;
+                return (
+                  <span key={i} className={isBugLine ? "bug-line" : undefined}>
+                    {lineNum}
+                  </span>
+                );
+              })}
             </div>
+            {targetBugLine !== null && (
+              <div
+                className="bug-line-highlight"
+                style={{
+                  top: 16 + (targetBugLine - 1) * 24 - scrollTop,
+                  height: 24
+                }}
+              />
+            )}
             <textarea
+              ref={textareaRef}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               onKeyDown={handleKeyDown}
+              onScroll={handleScroll}
               spellCheck={false}
               aria-label="Code editor"
             />

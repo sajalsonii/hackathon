@@ -131,6 +131,11 @@ export default function Success({ victory, rankInfo, stats, next }: SuccessProps
           <span className="eyebrow">BUG DNA ACQUIRED // {challenge?.bugDnaCategory || "LOGIC"}</span>
           <h3>{bugType}</h3>
           <p>{explanation}</p>
+          {challenge?.whatYouLearned && (
+            <p style={{ marginTop: 8, color: "var(--acid)", fontSize: 13, fontFamily: "var(--code)" }}>
+              <b>KEY TAKEAWAY:</b> {challenge.whatYouLearned}
+            </p>
+          )}
         </div>
       </section>
     </motion.main>

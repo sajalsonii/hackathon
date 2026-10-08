@@ -1,26 +1,41 @@
 import { useState, useEffect } from "react";
-import { PlayerStats, PlayerProfile, Language, Difficulty, Challenge } from "../types/game";
-import { challenges, getChallenge, getChallengeById } from "../data/challenges";
+import { User } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase";
+import {
+  PlayerStats,
+  PlayerProfile,
+  GameProgress,
+  Language,
+  Difficulty,
+  Challenge
+} from "../types/game";
+import { challenges, getChallengeById, getRandomChallenge } from "../data/challenges";
 
 const STORAGE_KEY = "code_slayer_save_v2";
 
+const defaultDnaStats = {
+  Syntax: 50,
+  Logic: 50,
+  Loops: 50,
+  Arrays: 50,
+  Functions: 50,
+  Runtime: 50,
+  Conditionals: 50,
+  "Off-by-One": 50
+};
+
 const guestDefaultStats: PlayerStats = {
   slayerName: "Guest Slayer",
-  xp: 3420,
-  streak: 7,
-  combo: 4,
-  bugsSlain: 38,
+  xp: 0,
+  streak: 0,
+  longestStreak: 0,
+  combo: 0,
+  bugsSlain: 0,
   completedChallengeIds: [],
-  dnaStats: {
-    Syntax: 86,
-    Logic: 72,
-    Loops: 64,
-    Arrays: 78,
-    Functions: 58,
-    Runtime: 49,
-    Conditionals: 81,
-    "Off-by-One": 69
-  }
+  dnaStats: defaultDnaStats,
+  currentWorld: "01",
+  achievements: [],
+  dailyChallenge: null
 };
 
 export interface RankInfo {
@@ -84,19 +99,44 @@ export interface VictorySummary {
 }
 
 export function useGameState(
-  profile?: PlayerProfile | null,
+  userOrProfile?: User | PlayerProfile | null,
+  gameProgress?: GameProgress | null,
   onProfileUpdate?: (updates: Partial<PlayerProfile>) => Promise<void>
 ) {
+  // Support either user object or legacy profile object as first argument
+  const user = userOrProfile && "id" in userOrProfile && "aud" in userOrProfile
+    ? (userOrProfile as User)
+    : null;
+
+  const initialProfile = userOrProfile && "slayer_name" in userOrProfile
+    ? (userOrProfile as PlayerProfile)
+    : null;
+
   const [stats, setStats] = useState<PlayerStats>(() => {
-    if (profile) {
+    if (gameProgress) {
       return {
-        slayerName: profile.slayer_name,
-        xp: profile.xp,
-        streak: profile.streak,
-        combo: profile.combo,
-        bugsSlain: profile.bugs_slain,
-        completedChallengeIds: profile.challenge_progress || [],
-        dnaStats: profile.dna_stats || guestDefaultStats.dnaStats
+        slayerName: gameProgress.username,
+        xp: gameProgress.xp,
+        streak: gameProgress.streak,
+        longestStreak: gameProgress.longest_streak,
+        combo: gameProgress.combo,
+        bugsSlain: gameProgress.bugs_slain,
+        completedChallengeIds: [],
+        dnaStats: gameProgress.bug_dna || defaultDnaStats,
+        currentWorld: gameProgress.current_world || "01",
+        achievements: gameProgress.achievements || [],
+        dailyChallenge: gameProgress.daily_challenge
+      };
+    }
+    if (initialProfile) {
+      return {
+        slayerName: initialProfile.slayer_name,
+        xp: initialProfile.xp,
+        streak: initialProfile.streak,
+        combo: initialProfile.combo,
+        bugsSlain: initialProfile.bugs_slain,
+        completedChallengeIds: initialProfile.challenge_progress || [],
+        dnaStats: initialProfile.dna_stats || defaultDnaStats
       };
     }
     try {
@@ -110,20 +150,34 @@ export function useGameState(
     return guestDefaultStats;
   });
 
-  // Whenever user profile updates from Supabase, sync with stats
+  // Whenever gameProgress updates from Supabase, sync with stats immediately
   useEffect(() => {
-    if (profile) {
+    if (gameProgress) {
       setStats({
-        slayerName: profile.slayer_name,
-        xp: profile.xp,
-        streak: profile.streak,
-        combo: profile.combo,
-        bugsSlain: profile.bugs_slain,
-        completedChallengeIds: profile.challenge_progress || [],
-        dnaStats: profile.dna_stats || guestDefaultStats.dnaStats
+        slayerName: gameProgress.username,
+        xp: gameProgress.xp,
+        streak: gameProgress.streak,
+        longestStreak: gameProgress.longest_streak,
+        combo: gameProgress.combo,
+        bugsSlain: gameProgress.bugs_slain,
+        completedChallengeIds: [],
+        dnaStats: gameProgress.bug_dna || defaultDnaStats,
+        currentWorld: gameProgress.current_world || "01",
+        achievements: gameProgress.achievements || [],
+        dailyChallenge: gameProgress.daily_challenge
+      });
+    } else if (initialProfile) {
+      setStats({
+        slayerName: initialProfile.slayer_name,
+        xp: initialProfile.xp,
+        streak: initialProfile.streak,
+        combo: initialProfile.combo,
+        bugsSlain: initialProfile.bugs_slain,
+        completedChallengeIds: initialProfile.challenge_progress || [],
+        dnaStats: initialProfile.dna_stats || defaultDnaStats
       });
     }
-  }, [profile]);
+  }, [gameProgress, initialProfile]);
 
   const [selectedLanguage, setSelectedLanguage] = useState<Language>("JavaScript");
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>("Medium");
@@ -146,7 +200,7 @@ export function useGameState(
     setCustomChallenge(null);
     const l = lang || selectedLanguage;
     const d = diff || selectedDifficulty;
-    const challenge = getChallenge(l, d);
+    const challenge = getRandomChallenge(l, d);
     setActiveChallengeId(challenge.id);
   };
 
@@ -166,7 +220,12 @@ export function useGameState(
     setSelectedDifficulty(challenge.difficulty);
   };
 
-  const recordVictory = (challengeId: string, timeSpentSeconds: number, pulsesUsed: number) => {
+  const recordVictory = async (
+    challengeId: string,
+    timeSpentSeconds: number,
+    pulsesUsed: number,
+    attempts: number = 1
+  ) => {
     const challenge =
       customChallenge && customChallenge.id === challengeId
         ? customChallenge
@@ -174,66 +233,157 @@ export function useGameState(
     const xpReward = challenge.xpReward;
     const prevXp = stats.xp;
     const newXp = prevXp + xpReward;
-    const prevRank = computeRankInfo(prevXp).rank;
-    const newRank = computeRankInfo(newXp).rank;
+    const rankData = computeRankInfo(newXp);
+    const newRank = rankData.rank;
+    const newLevel = rankData.level;
 
-    setStats((prev) => {
-      const alreadyCompleted = prev.completedChallengeIds.includes(challengeId);
-      const newDna = { ...prev.dnaStats };
-      const cat = challenge.bugDnaCategory;
-      if (newDna[cat] !== undefined) {
-        newDna[cat] = Math.min(99, newDna[cat] + 2);
-      }
+    const alreadyCompleted = stats.completedChallengeIds.includes(challengeId);
+    const newDna = { ...stats.dnaStats };
+    const cat = challenge.bugDnaCategory;
+    if (newDna[cat] !== undefined) {
+      newDna[cat] = Math.min(99, newDna[cat] + 2);
+    }
 
-      const updatedProgress = alreadyCompleted
-        ? prev.completedChallengeIds
-        : [...prev.completedChallengeIds, challengeId];
+    const newStreak = stats.streak + (alreadyCompleted ? 0 : 1);
+    const newLongestStreak = Math.max(stats.longestStreak || 0, newStreak);
+    const newCombo = stats.combo + 1;
+    const newBugsSlain = stats.bugsSlain + 1;
+    const currentWorld = challenge.worldId || stats.currentWorld || "01";
+    const nowIso = new Date().toISOString();
 
-      const newStats: PlayerStats = {
-        ...prev,
-        xp: newXp,
-        streak: prev.streak + (alreadyCompleted ? 0 : 1),
-        combo: prev.combo + 1,
-        bugsSlain: prev.bugsSlain + 1,
-        completedChallengeIds: updatedProgress,
-        dnaStats: newDna
-      };
+    const updatedProgress = alreadyCompleted
+      ? stats.completedChallengeIds
+      : [...stats.completedChallengeIds, challengeId];
 
-      // Sync with Supabase if callback provided
-      if (onProfileUpdate) {
-        onProfileUpdate({
-          xp: newXp,
-          slayer_rank: newRank,
-          streak: newStats.streak,
-          combo: newStats.combo,
-          bugs_slain: newStats.bugsSlain,
-          challenge_progress: updatedProgress,
-          dna_stats: newDna
-        }).catch(() => {});
-      }
+    const newStats: PlayerStats = {
+      ...stats,
+      xp: newXp,
+      streak: newStreak,
+      longestStreak: newLongestStreak,
+      combo: newCombo,
+      bugsSlain: newBugsSlain,
+      completedChallengeIds: updatedProgress,
+      dnaStats: newDna,
+      currentWorld
+    };
 
-      return newStats;
-    });
+    setStats(newStats);
 
     setLastVictory({
       challenge,
       xpEarned: xpReward,
       prevXp,
       newXp,
-      prevRank,
+      prevRank: computeRankInfo(prevXp).rank,
       newRank,
       timeSpentSeconds,
       pulsesUsed
     });
+
+    // Supabase Integration: Upsert public.game_progress and insert public.challenge_history
+    if (user) {
+      const username =
+        stats.slayerName ||
+        user.user_metadata?.slayer_name ||
+        user.email?.split("@")[0] ||
+        "Slayer";
+
+      const progressPayload = {
+        user_id: user.id,
+        username,
+        xp: newXp,
+        slayer_rank: newRank,
+        level: newLevel,
+        current_world: currentWorld,
+        streak: newStreak,
+        longest_streak: newLongestStreak,
+        combo: newCombo,
+        bugs_slain: newBugsSlain,
+        last_activity_date: nowIso,
+        bug_dna: newDna,
+        achievements: stats.achievements || [],
+        daily_challenge: stats.dailyChallenge || null,
+        updated_at: nowIso
+      };
+
+      try {
+        const { error: progressError } = await supabase
+          .from("game_progress")
+          .upsert(progressPayload, { onConflict: "user_id" });
+
+        if (progressError) {
+          console.error("Supabase game_progress upsert error:", progressError.message, progressError);
+        }
+      } catch (err: unknown) {
+        console.error(
+          "Supabase game_progress upsert exception:",
+          err instanceof Error ? err.message : err
+        );
+      }
+
+      const historyPayload = {
+        user_id: user.id,
+        challenge_title: challenge.title,
+        language: challenge.language,
+        difficulty: challenge.difficulty,
+        bug_category: challenge.bugType || challenge.bugDnaCategory || "Logic",
+        completed: true,
+        attempts: attempts || 1,
+        hints_used: pulsesUsed,
+        time_taken_seconds: timeSpentSeconds,
+        xp_earned: xpReward,
+        source: challenge.isAiGenerated
+          ? "ai"
+          : challenge.id.startsWith("daily")
+            ? "daily"
+            : "builtin"
+      };
+
+      try {
+        const { error: historyError } = await supabase
+          .from("challenge_history")
+          .insert(historyPayload);
+
+        if (historyError) {
+          console.error("Supabase challenge_history insert error:", historyError.message, historyError);
+        }
+      } catch (err: unknown) {
+        console.error(
+          "Supabase challenge_history insert exception:",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    if (onProfileUpdate) {
+      onProfileUpdate({
+        xp: newXp,
+        slayer_rank: newRank,
+        streak: newStreak,
+        combo: newCombo,
+        bugs_slain: newBugsSlain,
+        challenge_progress: updatedProgress,
+        dna_stats: newDna
+      }).catch(() => {});
+    }
   };
 
-  const resetToDefaults = () => {
+  const clearGameState = () => {
     setStats(guestDefaultStats);
+    setCustomChallenge(null);
+    setLastVictory(null);
+    setActiveChallengeId("js-med-bounds");
     try {
       localStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem("code_slayer_recent_titles_v1");
+      sessionStorage.removeItem("code_slayer_played_local_ids_v1");
     } catch {
       // ignore
     }
+  };
+
+  const resetToDefaults = () => {
+    clearGameState();
   };
 
   return {
@@ -246,8 +396,10 @@ export function useGameState(
     activeChallenge,
     startConfiguredHunt,
     startSpecificChallenge,
+    startCustomChallenge,
     recordVictory,
     lastVictory,
+    clearGameState,
     resetToDefaults
   };
 }

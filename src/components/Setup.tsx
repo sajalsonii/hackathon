@@ -14,6 +14,7 @@ interface SetupProps {
   start: () => void;
   rankInfo: RankInfo;
   stats: PlayerStats;
+  isLoading?: boolean;
 }
 
 export default function Setup({
@@ -23,7 +24,8 @@ export default function Setup({
   setDifficulty,
   start,
   rankInfo,
-  stats
+  stats,
+  isLoading
 }: SetupProps) {
   const currentPreviewChallenge = getChallenge(language, difficulty);
 
@@ -115,8 +117,19 @@ export default function Setup({
           </div>
 
           {/* Primary Action Button moved directly below Threat Level in left column */}
-          <button className="primary-button full start-hunt-btn" onClick={start}>
-            <Play /> Start hunt <ArrowRight />
+          <button
+            className="primary-button full start-hunt-btn"
+            onClick={start}
+            disabled={isLoading}
+            style={isLoading ? { opacity: 0.65, cursor: "not-allowed" } : {}}
+          >
+            {isLoading ? (
+              <>INITIALIZING SCAN...</>
+            ) : (
+              <>
+                <Play /> Start hunt <ArrowRight />
+              </>
+            )}
           </button>
         </section>
 

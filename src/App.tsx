@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
-import { Screen } from "./types/game";
+import { Screen, Challenge } from "./types/game";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { useGameState } from "./hooks/useGameState";
+import { supabase } from "./lib/supabase";
+import { challenges, getRandomChallenge, createAiChallengeValidator } from "./data/challenges";
 import TopBar from "./components/TopBar";
 import Landing from "./components/Landing";
 import Setup from "./components/Setup";
@@ -14,6 +16,8 @@ import BugDNAScreen from "./components/BugDNAScreen";
 import WorldProgression from "./components/WorldProgression";
 import Login from "./components/Login";
 import Signup from "./components/Signup";
+import HuntLoadingOverlay from "./components/HuntLoadingOverlay";
+import { challengePoolService } from "./services/challengePoolService";
 
 const pathToScreenMap: Record<string, Screen> = {
   "/": "landing",
@@ -56,8 +60,85 @@ const protectedScreens: Screen[] = [
   "world"
 ];
 
+// Anti-repetition helpers: Tracks up to 8 recent challenge titles to avoid duplication
+const RECENT_TITLES_KEY = "code_slayer_recent_titles_v1";
+
+function getRecentTitles(): string[] {
+  try {
+    const raw = sessionStorage.getItem(RECENT_TITLES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((t) => typeof t === "string" && t.trim().length > 0)
+          .slice(-8);
+      }
+    }
+  } catch {
+    // ignore storage issues
+  }
+  return [];
+}
+
+function saveRecentTitle(title: string) {
+  if (!title || !title.trim()) return;
+  try {
+    const current = getRecentTitles();
+    const cleanTitle = title.trim();
+    const updated = [
+      ...current.filter((t) => t.toLowerCase() !== cleanTitle.toLowerCase()),
+      cleanTitle
+    ].slice(-8);
+    sessionStorage.setItem(RECENT_TITLES_KEY, JSON.stringify(updated));
+  } catch {
+    // ignore storage issues
+  }
+}
+
+// Session cycling helpers for local challenge fallback
+const PLAYED_LOCAL_IDS_KEY = "code_slayer_played_local_ids_v1";
+
+function getPlayedLocalIds(): string[] {
+  try {
+    const raw = sessionStorage.getItem(PLAYED_LOCAL_IDS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((id) => typeof id === "string");
+      }
+    }
+  } catch {
+    // ignore storage issues
+  }
+  return [];
+}
+
+function recordPlayedLocalId(id: string, language: string, difficulty: string) {
+  try {
+    const current = getPlayedLocalIds();
+    const matching = challenges.filter(
+      (c) => c.language === language && c.difficulty === difficulty
+    );
+    const matchingIds = matching.map((c) => c.id);
+
+    const matchingPlayed = current.filter((pid) => matchingIds.includes(pid));
+    let nextPlayed: string[];
+
+    // If all matching local challenges have been played, cycle (reset category to just this new id)
+    if (matchingPlayed.length >= matchingIds.length - 1) {
+      nextPlayed = [...current.filter((pid) => !matchingIds.includes(pid)), id];
+    } else {
+      nextPlayed = [...current.filter((pid) => pid !== id), id];
+    }
+
+    sessionStorage.setItem(PLAYED_LOCAL_IDS_KEY, JSON.stringify(nextPlayed));
+  } catch {
+    // ignore storage issues
+  }
+}
+
 function AppContent() {
-  const { user, profile, logout, updateProfile, isLoading } = useAuth();
+  const { user, profile, gameProgress, logout, updateProfile, isLoading } = useAuth();
 
   const [screen, setScreenState] = useState<Screen>(() => {
     const path = window.location.pathname;
@@ -77,9 +158,30 @@ function AppContent() {
     activeChallenge,
     startConfiguredHunt,
     startSpecificChallenge,
+    startCustomChallenge,
     recordVictory,
-    lastVictory
-  } = useGameState(profile, updateProfile);
+    lastVictory,
+    clearGameState
+  } = useGameState(user, gameProgress, updateProfile);
+
+  const [isLoadingHunt, setIsLoadingHunt] = useState(false);
+  const lastAiTitleRef = useRef<string | null>(null);
+  const lastPlayedIdRef = useRef<string | null>(null);
+  const cancelGenerationRef = useRef(false);
+  const isSelectingRef = useRef(false);
+
+  // Initialize AI challenge pool on user login or language/difficulty changes
+  useEffect(() => {
+    if (user?.id) {
+      challengePoolService.initSession(user.id, selectedLanguage, selectedDifficulty);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) {
+      challengePoolService.ensurePool(selectedLanguage, selectedDifficulty);
+    }
+  }, [selectedLanguage, selectedDifficulty, user?.id]);
 
   // Authoritative route protection & redirect sync effect
   useEffect(() => {
@@ -164,9 +266,90 @@ function AppContent() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, [user]);
 
-  const handleStartFromSetup = () => {
-    startConfiguredHunt(selectedLanguage, selectedDifficulty);
-    setScreen("hunt");
+  const handleStartFromSetup = async () => {
+    // Edge Case: If user is not logged in, maintain local behavior with session cycling
+    if (!user) {
+      const playedIds = getPlayedLocalIds();
+      const guestChallenge = getRandomChallenge(
+        selectedLanguage,
+        selectedDifficulty,
+        playedIds
+      );
+      recordPlayedLocalId(guestChallenge.id, selectedLanguage, selectedDifficulty);
+      if (guestChallenge.title) {
+        saveRecentTitle(guestChallenge.title);
+      }
+      lastPlayedIdRef.current = guestChallenge.id;
+      startSpecificChallenge(guestChallenge.id);
+      setScreen("hunt");
+      return;
+    }
+
+    // Prevent duplicate selection on rapid clicks
+    if (isSelectingRef.current) return;
+    isSelectingRef.current = true;
+
+    // Check if challenge is already pre-generated in the pool:
+    const isInstantReady = challengePoolService.hasUnused(selectedLanguage, selectedDifficulty);
+    if (!isInstantReady) {
+      setIsLoadingHunt(true);
+    }
+    cancelGenerationRef.current = false;
+
+    try {
+      // Retrieve next unused challenge from the 5-problem pre-generated pool
+      const challenge = await challengePoolService.getNextChallenge(
+        selectedLanguage,
+        selectedDifficulty,
+        () => cancelGenerationRef.current
+      );
+
+      if (cancelGenerationRef.current) {
+        setIsLoadingHunt(false);
+        isSelectingRef.current = false;
+        return;
+      }
+
+      if (challenge.title) {
+        lastAiTitleRef.current = challenge.title;
+        saveRecentTitle(challenge.title);
+      }
+
+      lastPlayedIdRef.current = challenge.id;
+      startCustomChallenge(challenge);
+      setIsLoadingHunt(false);
+      setScreen("hunt");
+    } catch (err) {
+      console.warn("AI challenge selection failed, falling back to local challenge:", err);
+      if (cancelGenerationRef.current) {
+        setIsLoadingHunt(false);
+        isSelectingRef.current = false;
+        return;
+      }
+
+      const playedIds = getPlayedLocalIds();
+      const fallback = getRandomChallenge(
+        selectedLanguage,
+        selectedDifficulty,
+        playedIds
+      );
+      recordPlayedLocalId(fallback.id, selectedLanguage, selectedDifficulty);
+      if (fallback.title) {
+        saveRecentTitle(fallback.title);
+      }
+      lastPlayedIdRef.current = fallback.id;
+      startSpecificChallenge(fallback.id);
+      setIsLoadingHunt(false);
+      setScreen("hunt");
+    } finally {
+      isSelectingRef.current = false;
+    }
+  };
+
+  const handleCancelLoading = () => {
+    cancelGenerationRef.current = true;
+    isSelectingRef.current = false;
+    setIsLoadingHunt(false);
   };
 
   const handleStartDaily = () => {
@@ -183,13 +366,19 @@ function AppContent() {
     setScreen("hunt");
   };
 
-  const handleWin = (challengeId: string, timeSpentSeconds: number, pulsesUsed: number) => {
-    recordVictory(challengeId, timeSpentSeconds, pulsesUsed);
+  const handleWin = (
+    challengeId: string,
+    timeSpentSeconds: number,
+    pulsesUsed: number,
+    attempts?: number
+  ) => {
+    challengePoolService.markChallengeSolved(challengeId);
+    recordVictory(challengeId, timeSpentSeconds, pulsesUsed, attempts || 1);
     setScreenState("success");
   };
 
   const handleNextAfterWin = () => {
-    setScreen("dashboard");
+    handleStartFromSetup();
   };
 
   const handleAuthSuccess = () => {
@@ -208,6 +397,8 @@ function AppContent() {
 
   const handleLogout = async () => {
     await logout();
+    challengePoolService.clearSession();
+    clearGameState();
     setAuthNotice(null);
     setRedirectAfterAuth("dashboard");
     setScreenState("login");
@@ -291,6 +482,7 @@ function AppContent() {
             start={handleStartFromSetup}
             rankInfo={rankInfo}
             stats={stats}
+            isLoading={isLoadingHunt}
           />
         )}
 
@@ -342,6 +534,13 @@ function AppContent() {
           />
         )}
       </AnimatePresence>
+
+      <HuntLoadingOverlay
+        isOpen={isLoadingHunt}
+        language={selectedLanguage}
+        difficulty={selectedDifficulty}
+        onCancel={handleCancelLoading}
+      />
     </div>
   );
 }

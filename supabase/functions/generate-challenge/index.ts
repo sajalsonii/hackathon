@@ -29,6 +29,7 @@ interface ChallengeRequest {
   language: AllowedLanguage;
   difficulty: AllowedDifficulty;
   bugCategory?: AllowedBugCategory;
+  avoidTitles?: string[];
 }
 
 interface RawGeminiChallenge {
@@ -47,6 +48,156 @@ interface RawGeminiChallenge {
   explanation: string;
   whatYouLearned: string;
   xpReward: number;
+}
+
+// 35 varied beginner-friendly scenario themes to ensure high randomness
+const SCENARIO_THEMES = [
+  "shopping cart total calculation",
+  "temperature converter (Celsius to Fahrenheit)",
+  "game score and high score tracker",
+  "password length and security check",
+  "student grade average calculator",
+  "pizza order itemizer and price summary",
+  "countdown timer from seconds to zero",
+  "playlist song duration counter",
+  "vending machine coin change dispenser",
+  "library book checkout duration",
+  "bank account deposit and balance checker",
+  "parking lot hourly fee calculation",
+  "trivia quiz score tally",
+  "daily fitness step counter goal check",
+  "word or string reverser",
+  "even or odd number classifier",
+  "roster list of player names filter",
+  "smartphone battery level alert",
+  "movie ticket price discount by age",
+  "fruit basket inventory count",
+  "tip calculator for dining bill",
+  "speed limit radar warning check",
+  "coffee machine cup size selector",
+  "dice roll streak aggregator",
+  "recipe ingredient quantity scaler",
+  "weather forecast rainfall tracker",
+  "hotel room reservation night tally",
+  "gym workout repetition accumulator",
+  "discount coupon code validator",
+  "package shipping weight estimator",
+  "simple currency exchanger",
+  "calendar leap year or days calculator",
+  "fuel efficiency miles per gallon calculator",
+  "task list completed items counter",
+  "elevator floor destination indicator",
+] as const;
+
+// Concrete bug styles categorized by bug type
+const BUG_STYLES_BY_CATEGORY: Record<AllowedBugCategory, string[]> = {
+  syntax: [
+    "missing colon ':' at block header (e.g. def, if, for, while)",
+    "missing closing parenthesis ')' or bracket ']' or brace '}'",
+    "missing closing string quote (single or double quote)",
+    "wrong keyword spelling (e.g., 'fucntion', 'whlie', 'retrun', 'ELIF' instead of 'elif')",
+    "missing semicolon ';' at statement end in Java",
+    "missing or misplaced comma in parameter or list definition",
+    "wrong assignment '=' operator in boolean expression",
+  ],
+  logic: [
+    "inverted boolean condition (e.g. '>' instead of '<', or '==' instead of '!=')",
+    "wrong arithmetic operator (e.g., '+' instead of '*', or '-' instead of '+')",
+    "accidental variable assignment inside conditional branch",
+    "returning the wrong variable or calculation result",
+    "incorrect accumulator reset (resetting counter inside loop instead of before loop)",
+    "wrong order of operations lacking parentheses",
+  ],
+  conditionals: [
+    "flipped comparison operator (e.g. using '<=' when condition requires '>')",
+    "using logical OR ('||' or 'or') instead of logical AND ('&&' or 'and')",
+    "missing 'else' or fallthrough branch producing unexpected return",
+    "checking boundary condition with wrong sign or threshold value",
+    "comparing incompatible types or undefined state",
+  ],
+  loops: [
+    "wrong range endpoint (e.g., range(1, n) missing the final number n)",
+    "loop condition that never terminates (infinite loop)",
+    "wrong increment or decrement step (e.g. i-- instead of i++)",
+    "premature loop break or early return inside loop on first iteration",
+    "loop counter skipping elements",
+  ],
+  arrays: [
+    "index out of bounds (accessing index length instead of length - 1)",
+    "starting index from 1 instead of 0",
+    "pushing/appending to array with wrong method or order",
+    "iterating array length incorrectly in index lookup",
+    "confusing array element value with element index",
+  ],
+  functions: [
+    "missing return statement (returning undefined or None implicitly)",
+    "swapped function arguments in call",
+    "function parameter name mismatch with local variable",
+    "calling function with incorrect argument count",
+    "returning before all processing is complete",
+  ],
+  runtime: [
+    "division by zero error when denominator is zero",
+    "null pointer / undefined property access on empty object or list",
+    "type mismatch in string and number concatenation",
+    "calling a method on null or None reference",
+    "unhandled empty collection or empty string input",
+  ],
+  "off-by-one": [
+    "using '<=' instead of '<' on zero-indexed collection length",
+    "using '<' instead of '<=' when including the upper bound",
+    "slice or substring ending 1 character or element too short",
+    "fencepost error in fence/step counting loop",
+    "off-by-one in string indexing or array boundary",
+  ],
+};
+
+function getRandomScenarioTheme(): string {
+  return SCENARIO_THEMES[Math.floor(Math.random() * SCENARIO_THEMES.length)];
+}
+
+function pickBugCategoryAndStyle(
+  difficulty: AllowedDifficulty,
+  requestedCategory?: AllowedBugCategory
+): { category: AllowedBugCategory; style: string } {
+  let category: AllowedBugCategory;
+
+  if (requestedCategory) {
+    category = requestedCategory;
+  } else if (difficulty === "easy") {
+    category = "syntax";
+  } else if (difficulty === "medium") {
+    const mediumPool: AllowedBugCategory[] = [
+      "logic",
+      "conditionals",
+      "loops",
+      "arrays",
+      "off-by-one",
+    ];
+    category = mediumPool[Math.floor(Math.random() * mediumPool.length)];
+  } else {
+    const hardPool: AllowedBugCategory[] = [
+      "runtime",
+      "functions",
+      "logic",
+      "arrays",
+      "off-by-one",
+    ];
+    category = hardPool[Math.floor(Math.random() * hardPool.length)];
+  }
+
+  const styles = BUG_STYLES_BY_CATEGORY[category] || BUG_STYLES_BY_CATEGORY.syntax;
+  const style = styles[Math.floor(Math.random() * styles.length)];
+
+  return { category, style };
+}
+
+function generateNonce(): string {
+  return (
+    Math.random().toString(36).substring(2, 9) +
+    "-" +
+    Date.now().toString(36)
+  );
 }
 
 // Maps input bug category to the canonical Bug DNA category casing used in the frontend
@@ -158,42 +309,56 @@ function validateGeneratedChallenge(
 }
 
 // Build the structured prompt for Gemini
-function buildPrompt(req: ChallengeRequest): string {
-  const bugCategoryInstruction = req.bugCategory
-    ? `The bug MUST be strictly in the '${req.bugCategory}' category.`
-    : req.difficulty === "easy"
-      ? "The bug must be a syntax bug (e.g., missing punctuation, unbalanced brackets, typo in keyword)."
-      : req.difficulty === "medium"
-        ? "The bug must be a logic, conditional, loop, array, or off-by-one bug."
-        : "The bug must be a runtime exception, subtle data flow, or function signature bug.";
-
+function buildPrompt(params: {
+  language: AllowedLanguage;
+  difficulty: AllowedDifficulty;
+  bugCategory?: AllowedBugCategory;
+  chosenTheme: string;
+  chosenCategory: AllowedBugCategory;
+  chosenStyle: string;
+  nonce: string;
+  avoidTitles: string[];
+}): string {
   const lengthRange =
-    req.difficulty === "easy"
+    params.difficulty === "easy"
       ? "4 to 8 lines"
-      : req.difficulty === "medium"
+      : params.difficulty === "medium"
         ? "8 to 12 lines"
         : "10 to 15 lines";
 
-  const xp = req.difficulty === "easy" ? 150 : req.difficulty === "medium" ? 300 : 550;
+  const xp = params.difficulty === "easy" ? 150 : params.difficulty === "medium" ? 300 : 550;
+
+  const avoidInstruction =
+    params.avoidTitles.length > 0
+      ? `\nCRITICAL ANTI-REPETITION REQUIREMENT:
+Do not reuse these titles, themes or bugs: ${JSON.stringify(params.avoidTitles)}.
+You MUST invent a completely different scenario title, different code implementation, and a distinct bug from any in that list.\n`
+      : "";
 
   return `You are the backend challenge generator for Code Slayer, a cyberpunk-themed coding game.
-Generate ONE short debugging challenge in ${req.language.toUpperCase()} with difficulty '${req.difficulty.toUpperCase()}'.
+Generate ONE short, unique debugging challenge in ${params.language.toUpperCase()} with difficulty '${params.difficulty.toUpperCase()}'.
 
+MANDATORY RANDOM PARAMETERS:
+- Scenario Theme: ${params.chosenTheme}. The code logic MUST be centered on this practical scenario.
+- Target Bug Category: '${params.chosenCategory}'.
+- Target Concrete Bug Style: ${params.chosenStyle}. The code must contain exactly this specific bug.
+- Unique Random Seed Nonce: ${params.nonce}. (Use this nonce to generate novel variable names and distinct logic).
+${avoidInstruction}
 CRITICAL RULES:
 1. Exactly ONE intentional bug. The code must be completely valid and runnable once this single bug is fixed.
 2. Beginner-friendly and fair: no trick questions, no esoteric language quirks, no multiple unrelated bugs.
 3. Code Length: ${lengthRange}. Keep it concise and clean.
-4. ${bugCategoryInstruction}
-5. Code flavor: Realistic, varied, practical scenarios (algorithms, data filtering, inventory counters, score trackers, math calculations). Do NOT use cyberpunk metaphors inside the actual code variables; keep variable names clear and realistic.
-6. Creature & Theme flavor: The creatureName MUST have a futuristic digital glitch name (e.g., "Syntax Void Leech", "Null Pointer Phantom", "Index OOB Reaver", "Logic Gate Glitch").
-7. missionDescription: Exactly 2 sentences explaining the glitch anomaly without revealing the exact fix.
-8. Hints progression:
+4. Code flavor: Realistic, varied, practical scenarios based on the assigned theme. Do NOT use cyberpunk metaphors inside the actual code variables; keep variable names clear, readable, and realistic.
+5. Creature & Theme flavor: The creatureName MUST have a futuristic digital glitch name (e.g., "Syntax Void Leech", "Null Pointer Phantom", "Index OOB Reaver", "Logic Gate Glitch", "Quantum Heap Lurker"). Make it themed around the glitch.
+6. missionDescription: Exactly 2 sentences explaining the glitch anomaly without revealing the exact fix.
+7. Hints progression:
    - hint1: Conceptual clue only, do not give away line or token.
    - hint2: Narrows down to the affected area or logical flaw.
    - hint3: Very specific guidance on how to fix it, BUT the learner must still make the correction themselves. Under no circumstances include the complete corrected line verbatim.
-9. explanation: 1-2 clear sentences explaining why the bug occurs.
-10. whatYouLearned: Exactly one clear sentence summarizing the key takeaway.
-11. xpReward: Exactly ${xp}.
+8. explanation: 1-2 clear sentences explaining why the bug occurs.
+9. whatYouLearned: Exactly one clear sentence summarizing the key takeaway.
+10. xpReward: Exactly ${xp}.
+11. Genuinely unique and meaningfully different: Generate meaningfully different coding debugging problems. Do not repeat any previously used problem, code structure, bug scenario, or merely rename variables from an existing problem. Design distinct program logic tailored specifically to '${params.chosenTheme}'.
 
 Ensure brokenCode differs from fixedCode by only 1 line (for easy) or at most 2 lines (for medium/hard).`;
 }
@@ -237,7 +402,7 @@ const challengeResponseSchema = {
   ],
 };
 
-// Request challenge from Gemini API with timeout
+// Request challenge from Gemini API with timeout and elevated temperature for maximum variety
 async function callGemini(
   prompt: string,
   apiKey: string,
@@ -264,7 +429,8 @@ async function callGemini(
           },
         ],
         generationConfig: {
-          temperature: 0.4,
+          temperature: 1.0,
+          topP: 0.95,
           responseMimeType: "application/json",
           responseSchema: challengeResponseSchema,
         },
@@ -408,24 +574,70 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // Validate optional avoidTitles (array of up to 8 strings, each max 80 chars trimmed)
+  let avoidTitles: string[] = [];
+  if (body.avoidTitles !== undefined && body.avoidTitles !== null) {
+    if (Array.isArray(body.avoidTitles)) {
+      avoidTitles = body.avoidTitles
+        .filter((item): item is string => typeof item === "string")
+        .map((s) => s.trim().slice(0, 80))
+        .filter((s) => s.length > 0)
+        .slice(0, 8);
+    }
+  }
+
   const sanitizedReq: ChallengeRequest = {
     language: rawLanguage as AllowedLanguage,
     difficulty: rawDifficulty as AllowedDifficulty,
     bugCategory: rawBugCategory as AllowedBugCategory | undefined,
+    avoidTitles,
   };
 
-  const prompt = buildPrompt(sanitizedReq);
-
-  // 4. Call Gemini with retry (try up to 2 times)
+  // 4. Call Gemini with retry (try up to 2 times with fresh randomized parameters)
   let challengeResult: RawGeminiChallenge | null = null;
   let lastErrorType: string | null = null;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
+    // Generate fresh theme, bug category, style, and nonce for EACH attempt
+    const chosenTheme = getRandomScenarioTheme();
+    const { category: chosenCategory, style: chosenStyle } = pickBugCategoryAndStyle(
+      sanitizedReq.difficulty,
+      sanitizedReq.bugCategory
+    );
+    const nonce = generateNonce();
+
+    const prompt = buildPrompt({
+      language: sanitizedReq.language,
+      difficulty: sanitizedReq.difficulty,
+      bugCategory: sanitizedReq.bugCategory,
+      chosenTheme,
+      chosenCategory,
+      chosenStyle,
+      nonce,
+      avoidTitles,
+    });
+
     const outcome = await callGemini(prompt, geminiApiKey, geminiModel, 10000);
 
     if (outcome.success && outcome.data) {
       const validation = validateGeneratedChallenge(outcome.data, sanitizedReq.difficulty);
       if (validation.valid) {
+        // Server-side check: if returned title or brokenCode is identical to any avoidTitles entry (case-insensitive), retry once
+        const returnedTitle = String(outcome.data.title || "").trim().toLowerCase();
+        const returnedCode = String(outcome.data.brokenCode || "").trim().toLowerCase();
+
+        const isDuplicateTitle = avoidTitles.some(
+          (t) => t.trim().toLowerCase() === returnedTitle
+        );
+        const isDuplicateCode = avoidTitles.some(
+          (t) => t.trim().toLowerCase() === returnedCode
+        );
+
+        if (isDuplicateTitle || isDuplicateCode) {
+          // Retry once on collision
+          continue;
+        }
+
         challengeResult = outcome.data;
         break;
       }

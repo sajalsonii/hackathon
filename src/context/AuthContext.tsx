@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import { PlayerProfile } from "../types/game";
+import { PlayerProfile, GameProgress } from "../types/game";
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   profile: PlayerProfile | null;
+  gameProgress: GameProgress | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<{ error: Error | null }>;
   signup: (
@@ -17,53 +18,90 @@ interface AuthContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
   updateProfile: (updates: Partial<PlayerProfile>) => Promise<void>;
+  reloadGameProgress: () => Promise<GameProgress | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function mapGameProgressToProfile(currentUser: User, progress: GameProgress): PlayerProfile {
+  return {
+    id: currentUser.id,
+    user_id: currentUser.id,
+    slayer_name: progress.username,
+    email: currentUser.email || "",
+    xp: progress.xp,
+    slayer_rank: progress.slayer_rank,
+    streak: progress.streak,
+    combo: progress.combo,
+    bugs_slain: progress.bugs_slain,
+    current_world: progress.current_world,
+    achievements: progress.achievements || [],
+    challenge_progress: [],
+    dna_stats: progress.bug_dna || {
+      Syntax: 50,
+      Logic: 50,
+      Loops: 50,
+      Arrays: 50,
+      Functions: 50,
+      Runtime: 50,
+      Conditionals: 50,
+      "Off-by-One": 50
+    }
+  };
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
+  const [gameProgress, setGameProgress] = useState<GameProgress | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Helper to load or initialize player profile
-  const loadProfile = async (currentUser: User) => {
+  // Helper to load or initialize player game_progress from Supabase
+  const loadProfile = async (currentUser: User): Promise<GameProgress | null> => {
     try {
       const { data, error } = await supabase
-        .from("profiles")
+        .from("game_progress")
         .select("*")
-        .eq("id", currentUser.id)
-        .single();
+        .eq("user_id", currentUser.id)
+        .maybeSingle();
 
-      if (data && !error) {
-        setProfile(data as PlayerProfile);
-        return;
+      if (error) {
+        console.error("Supabase game_progress query error:", error.message, error);
       }
-    } catch {
-      // Table may not exist yet or network issue
+
+      if (data) {
+        const prog = data as GameProgress;
+        setGameProgress(prog);
+        setProfile(mapGameProgressToProfile(currentUser, prog));
+        return prog;
+      }
+    } catch (err: unknown) {
+      console.error(
+        "Supabase game_progress fetch exception:",
+        err instanceof Error ? err.message : err
+      );
     }
 
-    // Fallback: build profile from user metadata or local defaults
+    // No existing game_progress row: Insert starting row with initial defaults
     const metadataName =
       currentUser.user_metadata?.slayer_name ||
       currentUser.email?.split("@")[0] ||
       "Slayer";
 
-    const defaultProfile: PlayerProfile = {
-      id: currentUser.id,
+    const defaultProgress: GameProgress = {
       user_id: currentUser.id,
-      slayer_name: metadataName,
-      email: currentUser.email || "",
+      username: metadataName,
       xp: 0,
       slayer_rank: "Rookie Slayer",
+      level: 1,
+      current_world: "01",
       streak: 0,
+      longest_streak: 0,
       combo: 0,
       bugs_slain: 0,
-      current_world: "01",
-      achievements: [],
-      challenge_progress: [],
-      dna_stats: {
+      last_activity_date: new Date().toISOString(),
+      bug_dna: {
         Syntax: 50,
         Logic: 50,
         Loops: 50,
@@ -72,16 +110,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         Runtime: 50,
         Conditionals: 50,
         "Off-by-One": 50
-      }
+      },
+      achievements: [],
+      daily_challenge: null,
+      updated_at: new Date().toISOString()
     };
 
-    setProfile(defaultProfile);
-
-    // Try creating it in Supabase table in background
     try {
-      await supabase.from("profiles").upsert(defaultProfile);
-    } catch {
-      // ignore table schema errors
+      const { data: inserted, error: insertError } = await supabase
+        .from("game_progress")
+        .insert(defaultProgress)
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error(
+          "Supabase insert initial game_progress error:",
+          insertError.message,
+          insertError
+        );
+      }
+
+      const activeProgress = (inserted || defaultProgress) as GameProgress;
+      setGameProgress(activeProgress);
+      setProfile(mapGameProgressToProfile(currentUser, activeProgress));
+      return activeProgress;
+    } catch (err: unknown) {
+      console.error(
+        "Supabase insert initial game_progress exception:",
+        err instanceof Error ? err.message : err
+      );
+      setGameProgress(defaultProgress);
+      setProfile(mapGameProgressToProfile(currentUser, defaultProgress));
+      return defaultProgress;
     }
   };
 
@@ -107,6 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await loadProfile(session.user);
       } else {
         setProfile(null);
+        setGameProgress(null);
       }
       setIsLoading(false);
     });
@@ -124,6 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error) {
+        console.error("Supabase login error:", error.message, error);
         return { error };
       }
 
@@ -135,6 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error: null };
     } catch (err: unknown) {
+      console.error("Supabase login exception:", err instanceof Error ? err.message : err);
       return { error: err as Error };
     }
   };
@@ -153,52 +217,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error) {
+        console.error("Supabase signup error:", error.message, error);
         return { error, user: null, session: null };
       }
 
       if (data.user) {
-        // Initialize profile with starting values specified in requirements:
-        // XP: 0, Slayer Rank: "Rookie Slayer", Streak: 0, Combo: 0, Bugs Slain: 0
-        const initialProfile: PlayerProfile = {
-          id: data.user.id,
-          user_id: data.user.id,
-          slayer_name: trimmedName,
-          email: data.user.email || email,
-          xp: 0,
-          slayer_rank: "Rookie Slayer",
-          streak: 0,
-          combo: 0,
-          bugs_slain: 0,
-          current_world: "01",
-          achievements: [],
-          challenge_progress: [],
-          dna_stats: {
-            Syntax: 50,
-            Logic: 50,
-            Loops: 50,
-            Arrays: 50,
-            Functions: 50,
-            Runtime: 50,
-            Conditionals: 50,
-            "Off-by-One": 50
-          }
-        };
-
         if (data.session) {
           setSession(data.session);
           setUser(data.user);
-          setProfile(initialProfile);
-        }
-
-        try {
-          await supabase.from("profiles").upsert(initialProfile);
-        } catch {
-          // ignore if table is not configured yet
+          await loadProfile(data.user);
         }
       }
 
       return { error: null, user: data.user, session: data.session };
     } catch (err: unknown) {
+      console.error("Supabase signup exception:", err instanceof Error ? err.message : err);
       return { error: err as Error, user: null, session: null };
     }
   };
@@ -206,12 +239,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     try {
       await supabase.auth.signOut();
-    } catch {
-      // ignore error
+    } catch (err: unknown) {
+      console.error("Supabase signOut error:", err instanceof Error ? err.message : err);
     } finally {
       setUser(null);
       setSession(null);
       setProfile(null);
+      setGameProgress(null);
     }
   };
 
@@ -220,8 +254,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: `${window.location.origin}/login`
       });
+      if (error) {
+        console.error("Supabase resetPassword error:", error.message, error);
+      }
       return { error };
     } catch (err: unknown) {
+      console.error("Supabase resetPassword exception:", err instanceof Error ? err.message : err);
       return { error: err as Error };
     }
   };
@@ -233,14 +271,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (user) {
       try {
-        await supabase
-          .from("profiles")
-          .update(updates)
-          .eq("id", user.id);
-      } catch {
-        // ignore
+        const { error } = await supabase
+          .from("game_progress")
+          .upsert(
+            {
+              user_id: user.id,
+              username: updated.slayer_name,
+              xp: updated.xp,
+              slayer_rank: updated.slayer_rank,
+              streak: updated.streak,
+              combo: updated.combo,
+              bugs_slain: updated.bugs_slain,
+              current_world: updated.current_world,
+              bug_dna: updated.dna_stats,
+              updated_at: new Date().toISOString()
+            },
+            { onConflict: "user_id" }
+          );
+
+        if (error) {
+          console.error("Supabase game_progress update error:", error.message, error);
+        }
+      } catch (err: unknown) {
+        console.error("Supabase game_progress update exception:", err instanceof Error ? err.message : err);
       }
     }
+  };
+
+  const reloadGameProgress = async () => {
+    if (!user) return null;
+    return await loadProfile(user);
   };
 
   return (
@@ -249,12 +309,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         session,
         profile,
+        gameProgress,
         isLoading,
         login,
         signup,
         logout,
         resetPassword,
-        updateProfile
+        updateProfile,
+        reloadGameProgress
       }}
     >
       {children}
